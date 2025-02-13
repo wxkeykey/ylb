@@ -34,7 +34,14 @@ jobs:
         tool="${{ github.event.inputs.tool_name }}"
         # 使用 apt-cache 获取工具及其所有依赖项，并严格过滤有效包名
         dependencies=$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances "$tool" | grep -E "^\w" | awk '{print $1}' | sort -u)
-        echo "dependencies=$dependencies" >> $GITHUB_ENV
+        # 验证依赖列表是否为空
+        if [ -z "$dependencies" ]; then
+          echo "Error: No valid dependencies found for '$tool'."
+          exit 1
+        fi
+        # 确保依赖列表不包含非法字符
+        sanitized_dependencies=$(echo "$dependencies" | tr '\n' ' ' | sed 's/[^a-zA-Z0-9\._-]//g')
+        echo "dependencies=$sanitized_dependencies" >> $GITHUB_ENV
 
     - name: 下载工具及其依赖项
       run: |

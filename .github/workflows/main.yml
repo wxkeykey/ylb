@@ -1,13 +1,10 @@
-name: Build and Package Tool with Dependencies
+name: 下载工具及其依赖并打包为离线包
 
 on:
-  push:
-    branches:
-      - main  # 当代码推送到 main 分支时触发
   workflow_dispatch:
     inputs:
       tool_name:
-        description: '请输入工具名称 (例如 curl, wget 等)'
+        description: '请输入要下载的工具名称 (例如 curl)'
         required: true
         default: 'curl'
       tag:
@@ -15,93 +12,69 @@ on:
         required: false
 
 jobs:
-  build-and-package:
+  download_and_package:
     runs-on: ubuntu-latest
-
     steps:
-      # 检出代码（如果需要的话）
-      - name: Checkout code
-        uses: actions/checkout@v3
+    - name: 检出存储库
+      uses: actions/checkout@v4
 
-      # 设置输入变量
-      - name: Set input variables
-        id: set_vars
-        run: |
-          # 获取用户输入的工具名称
-          if [ -z "${{ github.event.inputs.tool_name }}" ]; then
-            echo "Error: tool_name is not provided. Please provide a valid tool name."
-            exit 1
-          fi
+    - name: 更新系统并安装必要的工具
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y dpkg-dev
 
-          echo "TOOL_NAME=${{ github.event.inputs.tool_name }}" >> $GITHUB_ENV
-          
-          # 获取用户输入的标签，如果没有提供则使用当前日期
-          if [ -z "${{ github.event.inputs.tag }}" ]; then
-            echo "RELEASE_TAG=$(date +'%Y%m%d')" >> $GITHUB_ENV
-          else
-            echo "RELEASE_TAG=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
-          fi
+    - name: 创建临时目录
+      run: |
+        mkdir -p temp_package
+        cd temp_package
 
-      # 更新系统并安装工具及其依赖
-      - name: Install tool and dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{ env.TOOL_NAME }}  # 安装用户指定的工具及其依赖
+    - name: 获取工具及其依赖项
+      id: get_dependencies
+      run: |
+        tool="${{ github.event.inputs.tool_name }}"
+        # 使用 apt-cache 获取工具及其所有依赖项
+        dependencies=$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances "$tool" | grep "^\w" | sort -u)
+        echo "dependencies=$dependencies" >> $GITHUB_ENV
 
-      # 创建一个临时目录来存放工具及其依赖
-      - name: Create temporary directory for packaging
-        run: |
-          mkdir -p /tmp/tool-package/bin
-          mkdir -p /tmp/tool-package/lib
+    - name: 下载工具及其依赖项
+      run: |
+        cd temp_package
+        # 下载工具及其所有依赖项
+        for pkg in ${{ env.dependencies }}; do
+          apt-get download "$pkg"
+        done
 
-      # 复制工具及其依赖到临时目录
-      - name: Copy tool and dependencies to package directory
-        run: |
-          # 检查 TOOL_NAME 是否为空
-          if [ -z "${{ env.TOOL_NAME }}" ]; then
-            echo "Error: TOOL_NAME is not set. Please provide a valid tool name."
-            exit 1
-          fi
+    - name: 打包工具及其依赖项
+      run: |
+        cd temp_package
+        # 将所有下载的 .deb 文件打包成一个 tar.gz 文件
+        package_name="${{ github.event.inputs.tool_name }}_offline_package.tar.gz"
+        tar -czf "../$package_name" *.deb
+        echo "PACKAGE_NAME=$package_name" >> $GITHUB_ENV
 
-          # 找到工具的二进制文件路径
-          TOOL_PATH=$(which ${{ env.TOOL_NAME }})
-          if [ -z "$TOOL_PATH" ]; then
-            echo "Error: Tool '${{ env.TOOL_NAME }}' not found. Please ensure it is installed."
-            exit 1
-          fi
-          echo "Tool binary path: $TOOL_PATH"
-          
-          # 复制工具二进制文件到临时目录
-          cp $TOOL_PATH /tmp/tool-package/bin/
+    - name: 列出生成的文件以调试
+      run: |
+        ls -lh
 
-          # 使用 ldd 查找工具的所有依赖库，并复制到 lib 目录
-          ldd $TOOL_PATH | grep '=>' | awk '{print $3}' | xargs -I '{}' cp --parents '{}' /tmp/tool-package/lib/
+    - name: 确定发布名称和标签
+      id: determine_release_info
+      run: |
+        if [ -z "${{ github.event.inputs.tag }}" ]; then
+          tag_name=$(date +'%Y%m%d')
+        else
+          tag_name="${{ github.event.inputs.tag }}"
+        fi
+        echo "RELEASE_TAG=$tag_name" >> $GITHUB_ENV
+        echo "RELEASE_NAME=${{ env.PACKAGE_NAME }}" >> $GITHUB_ENV
 
-      # 打包工具及其依赖
-      - name: Package tool and dependencies
-        run: |
-          cd /tmp/tool-package
-          tar -czf /tmp/${{ env.TOOL_NAME }}-with-dependencies-${{ env.RELEASE_TAG }}.tar.gz .
+    - name: 上传至 GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ env.RELEASE_TAG }}
+        files: ${{ env.PACKAGE_NAME }}
+        body: "Offline package for ${{ github.event.inputs.tool_name }} and its dependencies"
+        token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 创建 GitHub Release
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v${{ env.RELEASE_TAG }}  # 使用用户提供的标签或当前日期作为版本号
-          release_name: Release ${{ env.RELEASE_TAG }}
-          draft: false
-          prerelease: false
-
-      # 上传打包文件到 GitHub Releases
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}  # 获取 create_release 的输出
-          asset_path: /tmp/${{ env.TOOL_NAME }}-with-dependencies-${{ env.RELEASE_TAG }}.tar.gz
-          asset_name: ${{ env.TOOL_NAME }}-with-dependencies-${{ env.RELEASE_TAG }}.tar.gz
-          asset_content_type: application/gzip
+    - name: 清理临时文件
+      run: |
+        rm -rf temp_package

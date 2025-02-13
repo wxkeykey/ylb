@@ -13,7 +13,7 @@ on:
 
 jobs:
   download_and_package:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
     - name: 检出存储库
       uses: actions/checkout@v4
@@ -35,8 +35,8 @@ jobs:
       run: |
         set -e
         tool="${{ github.event.inputs.tool_name }}"
-        # 使用 apt-rdepends 获取工具及其所有依赖项
-        dependencies=$(apt-rdepends --build-depends --follow=DEPENDS "$tool" | grep -v "^ ")
+        # 使用 apt-rdepends 获取工具及其所有依赖项，并过滤无效包
+        dependencies=$(apt-rdepends --build-depends --follow=DEPENDS "$tool" | grep -v "^ " | xargs -n1 apt-cache show 2>/dev/null | grep "Package:" | awk '{print $2}' | sort -u)
         # 验证依赖列表是否为空
         if [ -z "$dependencies" ]; then
           echo "Error: No valid dependencies found for '$tool'."
@@ -44,12 +44,23 @@ jobs:
         fi
         echo "dependencies=$dependencies" >> $GITHUB_ENV
 
+    - name: 打印依赖列表
+      run: |
+        echo "Dependencies to download:"
+        echo "${{ env.dependencies }}"
+
     - name: 下载工具及其依赖项
       run: |
         set -e
         cd "$TEMP_DIR"
         # 下载工具及其所有依赖项
-        sudo apt-get download ${{ env.dependencies }}
+        for pkg in ${{ env.dependencies }}; do
+          if apt-cache show "$pkg" > /dev/null 2>&1; then
+            apt-get download "$pkg"
+          else
+            echo "Warning: Package '$pkg' not found, skipping..."
+          fi
+        done
 
     - name: 打包工具及其依赖项
       run: |

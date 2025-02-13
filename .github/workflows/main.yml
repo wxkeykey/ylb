@@ -30,36 +30,26 @@ jobs:
         TEMP_DIR=$(mktemp -d)
         echo "TEMP_DIR=$TEMP_DIR" >> $GITHUB_ENV
 
-    - name: 获取工具及其依赖项
-      id: get_dependencies
+    - name: 获取工具及其所有依赖项
       run: |
         set -e
         tool="${{ github.event.inputs.tool_name }}"
-        # 使用 apt-rdepends 获取工具及其所有依赖项，并过滤无效包
-        dependencies=$(apt-rdepends --build-depends --follow=DEPENDS "$tool" | grep -v "^ " | xargs -n1 apt-cache show 2>/dev/null | grep "Package:" | awk '{print $2}' | sort -u)
+        dependencies=$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances "$tool" | grep -E "^\w" | awk '{print $1}' | sort -u)
+
         # 验证依赖列表是否为空
         if [ -z "$dependencies" ]; then
           echo "Error: No valid dependencies found for '$tool'."
           exit 1
         fi
-        echo "dependencies=$dependencies" >> $GITHUB_ENV
 
-    - name: 打印依赖列表
-      run: |
-        echo "Dependencies to download:"
-        echo "${{ env.dependencies }}"
+        # 确保依赖列表不包含非法字符
+        sanitized_dependencies=$(echo "$dependencies" | tr '\n' ' ' | sed 's/[^a-zA-Z0-9\._-]/ /g')
 
-    - name: 下载工具及其依赖项
-      run: |
-        set -e
-        cd "$TEMP_DIR"
         # 下载工具及其所有依赖项
-        for pkg in ${{ env.dependencies }}; do
-          if apt-cache show "$pkg" > /dev/null 2>&1; then
-            apt-get download "$pkg"
-          else
-            echo "Warning: Package '$pkg' not found, skipping..."
-          fi
+        mkdir -p "$TEMP_DIR"
+        cd "$TEMP_DIR"
+        for pkg in $sanitized_dependencies; do
+          apt-get download "$pkg" || echo "Warning: Failed to download package '$pkg'"
         done
 
     - name: 打包工具及其依赖项
@@ -92,7 +82,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ env.RELEASE_TAG }}
-        files: $TEMP_DIR/${{ env.PACKAGE_NAME }}
+        files: ${{ env.TEMP_DIR }}/${{ env.PACKAGE_NAME }}
         body: "Offline package for ${{ github.event.inputs.tool_name }} and its dependencies"
         token: ${{ secrets.GITHUB_TOKEN }}
 

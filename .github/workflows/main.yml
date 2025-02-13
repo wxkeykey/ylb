@@ -34,7 +34,9 @@ jobs:
       run: |
         set -e
         tool="${{ github.event.inputs.tool_name }}"
-        dependencies=$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances "$tool" | grep -E "^\w" | awk '{print $1}' | sort -u)
+        
+        # 使用 apt-rdepends 获取工具及其所有依赖项
+        dependencies=$(apt-rdepends "$tool" 2>/dev/null | grep -E "^$tool|^\w" | awk '{print $1}' | sort -u)
 
         # 验证依赖列表是否为空
         if [ -z "$dependencies" ]; then

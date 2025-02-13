@@ -86,7 +86,7 @@ jobs:
         tag_name: ${{ env.RELEASE_TAG }}
         files: ${{ env.TEMP_DIR }}/${{ env.PACKAGE_NAME }}
         body: "Offline package for ${{ github.event.inputs.tool_name }} and its dependencies"
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.GH_PAT }}
 
     - name: 清理临时文件
       run: |

@@ -39,16 +39,20 @@ jobs:
           echo "Error: No valid dependencies found for '$tool'."
           exit 1
         fi
-        # 确保依赖列表不包含非法字符
-        sanitized_dependencies=$(echo "$dependencies" | tr '\n' ' ' | sed 's/[^a-zA-Z0-9\._-]//g')
+        # 将依赖列表转换为逗号分隔的单行字符串
+        sanitized_dependencies=$(echo "$dependencies" | tr '\n' ',' | sed 's/,$//')
         echo "dependencies=$sanitized_dependencies" >> $GITHUB_ENV
 
     - name: 下载工具及其依赖项
       run: |
         cd temp_package
         # 下载工具及其所有依赖项
-        for pkg in ${{ env.dependencies }}; do
-          apt-get download "$pkg"
+        for pkg in $(echo "${{ env.dependencies }}" | tr ',' ' '); do
+          if apt-cache show "$pkg" > /dev/null 2>&1; then
+            apt-get download "$pkg"
+          else
+            echo "Warning: Package '$pkg' not found, skipping..."
+          fi
         done
 
     - name: 打包工具及其依赖项
